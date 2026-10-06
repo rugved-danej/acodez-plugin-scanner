@@ -88,14 +88,13 @@ jobs:
       - name: Rename and Prepare Binary
         shell: bash
         run: |
-          EXT="${{ matrix.ext }}"
-          mv target/${{ matrix.target }}/release/plugin_scanner${EXT} plugin_scanner-${{ needs.check-release.outputs.tag }}-${{ matrix.target }}${EXT}
+          mv target/${{ matrix.target }}/release/plugin_scanner${{ matrix.ext }} plugin_scanner-${{ needs.check-release.outputs.tag }}-${{ matrix.target }}${{ matrix.ext }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: plugin_scanner-${{ matrix.target }}
-          path: plugin_scanner-${{ needs.check-release.outputs.tag }}-${{ matrix.target }}${EXT}
+          path: plugin_scanner-${{ needs.check-release.outputs.tag }}-${{ matrix.target }}${{ matrix.ext }}
 
   release:
     needs: [check-release, build]
