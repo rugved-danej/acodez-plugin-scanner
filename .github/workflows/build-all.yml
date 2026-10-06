@@ -1,0 +1,115 @@
+name: Build and Release Scanner
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Check daily
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.get_tag.outputs.tag }}
+      exists: ${{ steps.check_release.outputs.exists }}
+    steps:
+      - name: Get latest release tag from Acode-Foundation
+        id: get_tag
+        run: |
+          LATEST_TAG=$(curl -s https://api.github.com/repos/Acode-Foundation/plugin_scanner/releases/latest | jq -r .tag_name)
+          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+      - name: Check if release exists in this repo
+        id: check_release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view ${{ steps.get_tag.outputs.tag }} --repo ${{ github.repository }} &>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    needs: check-release
+    if: needs.check-release.outputs.exists == 'false'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            cross: false
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            cross: true
+          - os: ubuntu-latest
+            target: aarch64-linux-android
+            cross: true
+          - os: ubuntu-latest
+            target: armv7-linux-androideabi
+            cross: true
+          - os: ubuntu-latest
+            target: x86_64-pc-windows-gnu
+            cross: true
+            ext: .exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            cross: false
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            cross: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout Acode-Foundation repo
+        uses: actions/checkout@v4
+        with:
+          repository: Acode-Foundation/plugin_scanner
+          ref: ${{ needs.check-release.outputs.tag }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross == true
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build with cross
+        if: matrix.cross == true
+        run: cross build --target ${{ matrix.target }} --release
+
+      - name: Build with cargo
+        if: matrix.cross == false
+        run: cargo build --target ${{ matrix.target }} --release
+
+      - name: Rename and Prepare Binary
+        shell: bash
+        run: |
+          EXT="${{ matrix.ext }}"
+          mv target/${{ matrix.target }}/release/plugin_scanner${EXT} plugin_scanner-${{ needs.check-release.outputs.tag }}-${{ matrix.target }}${EXT}
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin_scanner-${{ matrix.target }}
+          path: plugin_scanner-${{ needs.check-release.outputs.tag }}-${{ matrix.target }}${EXT}
+
+  release:
+    needs: [check-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check-release.outputs.tag }}
+          name: Release ${{ needs.check-release.outputs.tag }}
+          files: artifacts/*
